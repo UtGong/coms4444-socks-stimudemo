@@ -15,7 +15,7 @@ This directory is not itself discovered - the registry only matches
 
 from models.player import GameContext, PlayerSnapshot, Selection, TurnContext
 from models.player import Player as BasePlayer
-
+from itertools import combinations
 
 class Player8(BasePlayer):
 	"""Rename me to Player<k>, where <k> is your group number."""
@@ -103,4 +103,24 @@ class Player8(BasePlayer):
 		# Replace everything below with your strategy. This baseline wears the
 		# first two socks it is handed and never discards, which is the
 		# do-nothing behaviour a real strategy should beat.
-		return Selection(wear=(0, 1), discard=())
+
+		# Edge cases
+		# Handle when a pair of socks cannot be made
+		n = len(offered)
+		if n == 0:
+			return Selection(wear=(), discard=())
+		if n == 1:
+			return Selection(wear=(0,), discard=())
+
+		# Finds the index pair of socks that is closest to 6
+		target = 6
+		best_pair = min(
+			combinations(range(n), 2),
+			key=lambda pair: abs(abs(offered[pair[0]] - offered[pair[1]]) - target)
+		)
+
+		# Create an array of the remaining socks for discard method
+		worn = set(best_pair)
+		unworn = [i for i in range(n) if i not in worn]
+
+		return Selection(wear=best_pair, discard=())
