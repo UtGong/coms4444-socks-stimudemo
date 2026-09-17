@@ -12,7 +12,7 @@ from analysis.strategy_rules import (
 
 
 class StrategyRulesTest(unittest.TestCase):
-    def test_stock_thresholds_encode_daily_feasibility(self):
+    def test_stock_thresholds_encode_next_day_feasibility(self):
         self.assertEqual(stock_bucket(7, 4), "<2 socks/person")
         self.assertEqual(stock_bucket(8, 4), "2-<4 socks/person")
         self.assertEqual(stock_bucket(16, 4), "4-<6 socks/person")
