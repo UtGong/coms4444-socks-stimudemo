@@ -1,9 +1,10 @@
-"""Build a bounded multi-roommate sock decision tree in SQLite.
+"""Build a bounded sequential multi-roommate sock decision tree in SQLite.
 
-The literal tree is intractable: a four-roommate day can have 24**4 joint
-actions before chance outcomes.  This explorer enumerates every individual
-legal action, samples joint interactions, samples random orders/draws/holes,
-merges equivalent next-day states, and retains a diverse state frontier.
+Each roommate draws and acts in random order. Kept leftovers return immediately,
+so an earlier choice changes the drawer from which later roommates draw. The
+explorer covers baseline-context individual actions, samples sequential action
+interactions and chance outcomes, merges equivalent next-day states, and keeps
+a diverse state frontier.
 """
 
 from __future__ import annotations
@@ -75,13 +76,15 @@ class State:
 class Scenario:
     roommates: int
     capacity: int
+    sock_level: float
     requested_socks_per_person: float
     budget: int | None
+    budget_level: float
     seed: int
     days: int
     unit: int
     chance_samples: int
-    max_joint_profiles: int
+    max_trajectories: int
     max_states_per_day: int
 
     @property
@@ -111,36 +114,49 @@ class TransitionMetrics:
     spent_today: int
 
 
+@dataclass(frozen=True)
+class TrajectoryResult:
+    state: State
+    metrics: TransitionMetrics
+    order: tuple[int, ...]
+    hands: tuple[tuple[Sock, ...], ...]
+    choices: tuple[Choice, ...]
+    action_indices: tuple[int, ...]
+
+
 PROFILE_DEFAULTS = {
     "small": {
-        "roommates": (2, 4),
-        "sock_ratios": (8.0, 12.0),
-        "budgets_per_person": (0, 100, None),
+        "roommates": (1, 5, 10),
+        "day_values": (1, 10, 100, 1000),
+        "sock_levels": (0.0, 0.5, 1.0),
+        "budget_levels": (0.0, 0.5, 1.0),
+        "full_grid": False,
         "seeds": (1,),
-        "days": 10,
-        "chance_samples": 2,
-        "max_joint_profiles": 128,
-        "max_states": 50,
+        "chance_samples": 1,
+        "max_trajectories": 256,
+        "state_caps": ((30, 20), (100, 5), (360, 2), (1000, 1)),
     },
     "research": {
-        "roommates": (2, 4, 6),
-        "sock_ratios": (8.0, 12.0, 16.0),
-        "budgets_per_person": (0, 25, 100, 300, None),
+        "roommates": tuple(range(1, 11)),
+        "day_values": (1, 10, 30, 100, 360, 1000),
+        "sock_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "budget_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "full_grid": False,
         "seeds": (1,),
-        "days": 10,
-        "chance_samples": 3,
-        "max_joint_profiles": 192,
-        "max_states": 200,
+        "chance_samples": 1,
+        "max_trajectories": 256,
+        "state_caps": ((30, 30), (100, 5), (360, 2), (1000, 1)),
     },
     "large": {
-        "roommates": (2, 4, 6),
-        "sock_ratios": (8.0, 12.0, 16.0),
-        "budgets_per_person": (0, 25, 100, 300, None),
+        "roommates": tuple(range(1, 11)),
+        "day_values": (1, 10, 30, 100, 360, 1000),
+        "sock_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "budget_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "full_grid": True,
         "seeds": (1, 2),
-        "days": 10,
-        "chance_samples": 4,
-        "max_joint_profiles": 384,
-        "max_states": 400,
+        "chance_samples": 2,
+        "max_trajectories": 384,
+        "state_caps": ((30, 50), (100, 10), (360, 4), (1000, 2)),
     },
 }
 
@@ -157,15 +173,18 @@ CREATE TABLE IF NOT EXISTS scenarios (
     profile TEXT NOT NULL,
     roommates INTEGER NOT NULL,
     capacity INTEGER NOT NULL,
+    sock_level REAL NOT NULL,
     requested_socks_per_person REAL NOT NULL,
     actual_socks_per_person REAL NOT NULL,
     budget INTEGER,
     budget_per_person REAL,
+    budget_level REAL NOT NULL,
+    budget_per_player_day REAL NOT NULL,
     seed INTEGER NOT NULL,
     days INTEGER NOT NULL,
     unit INTEGER NOT NULL,
     chance_samples INTEGER NOT NULL,
-    max_joint_profiles INTEGER NOT NULL,
+    max_trajectories INTEGER NOT NULL,
     max_states_per_day INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     started_at TEXT,
@@ -177,8 +196,8 @@ CREATE TABLE IF NOT EXISTS layers (
     status TEXT NOT NULL,
     source_states INTEGER NOT NULL DEFAULT 0,
     chance_realizations INTEGER NOT NULL DEFAULT 0,
-    theoretical_joint_profiles_log10 REAL NOT NULL DEFAULT 0,
-    explored_joint_profiles INTEGER NOT NULL DEFAULT 0,
+    theoretical_trajectories_log10 REAL NOT NULL DEFAULT 0,
+    explored_trajectories INTEGER NOT NULL DEFAULT 0,
     transition_rows INTEGER NOT NULL DEFAULT 0,
     unique_candidates INTEGER NOT NULL DEFAULT 0,
     retained_states INTEGER NOT NULL DEFAULT 0,
@@ -215,10 +234,10 @@ CREATE TABLE IF NOT EXISTS chance_contexts (
     day INTEGER NOT NULL,
     parent_state_id INTEGER NOT NULL REFERENCES states(id) ON DELETE CASCADE,
     chance_index INTEGER NOT NULL,
-    joint_profiles_theoretical INTEGER NOT NULL,
-    pairwise_profiles_possible INTEGER NOT NULL,
-    pairwise_profiles_explored INTEGER NOT NULL,
-    profiles_explored INTEGER NOT NULL,
+    trajectories_theoretical_upper INTEGER NOT NULL,
+    sequential_pairs_possible INTEGER NOT NULL,
+    sequential_pairs_explored INTEGER NOT NULL,
+    trajectories_explored INTEGER NOT NULL,
     order_json TEXT NOT NULL,
     hands_json TEXT NOT NULL,
     UNIQUE (scenario_id, day, parent_state_id, chance_index)
@@ -232,8 +251,8 @@ CREATE TABLE IF NOT EXISTS transitions (
     child_state_id INTEGER REFERENCES states(id) ON DELETE SET NULL,
     retained INTEGER NOT NULL DEFAULT 0,
     context_id INTEGER NOT NULL REFERENCES chance_contexts(id) ON DELETE CASCADE,
-    profile_index INTEGER NOT NULL,
-    profile_indices_json TEXT NOT NULL,
+    trajectory_index INTEGER NOT NULL,
+    action_indices_json TEXT NOT NULL,
     actions_json TEXT NOT NULL,
     immediate_scores_json TEXT NOT NULL,
     main_immediate INTEGER NOT NULL,
@@ -274,11 +293,80 @@ def stable_seed(*parts: object) -> int:
     return int.from_bytes(digest, "big")
 
 
-def round_capacity(roommates: int, ratio: float, unit: int = 4) -> int:
-    requested = math.ceil(roommates * ratio)
-    minimum = unit * roommates + 11
-    capacity = max(requested, minimum)
-    return 4 * math.ceil(capacity / 4)
+def capacity_bounds(roommates: int, unit: int = 4) -> tuple[int, int]:
+    """Return legal multiples of four inside the requested sock interval."""
+    requested_floor = 4 * roommates + 10
+    engine_floor = unit * roommates + 10
+    strict_floor = max(requested_floor, engine_floor)
+    minimum = 4 * (strict_floor // 4 + 1)
+    maximum = 20 * roommates
+    if minimum > maximum:
+        raise ValueError(
+            f"no legal capacity for n={roommates}, unit={unit} inside "
+            f"[{requested_floor}, {maximum}]"
+        )
+    return minimum, maximum
+
+
+def capacity_from_level(roommates: int, level: float, unit: int = 4) -> tuple[int, float]:
+    if not 0 <= level <= 1:
+        raise ValueError(f"sock level must lie in [0,1], got {level}")
+    minimum, maximum = capacity_bounds(roommates, unit)
+    target = minimum + level * (maximum - minimum)
+    capacity = min(maximum, max(minimum, 4 * round(target / 4)))
+    return capacity, target / roommates
+
+
+def budget_from_level(roommates: int, days: int, level: float) -> int:
+    if not 0 <= level <= 1:
+        raise ValueError(f"budget level must lie in [0,1], got {level}")
+    return round(level * 4 * roommates * days)
+
+
+def parameter_pairs(
+    sock_levels: tuple[float, ...],
+    budget_levels: tuple[float, ...],
+    full_grid: bool,
+) -> tuple[tuple[float, float], ...]:
+    """Return a full grid or a boundary-aware space-filling cross design."""
+    if full_grid:
+        return tuple(itertools.product(sock_levels, budget_levels))
+    if not sock_levels or not budget_levels:
+        return tuple()
+
+    pairs: set[tuple[float, float]] = set()
+    sock_last = len(sock_levels) - 1
+    budget_last = len(budget_levels) - 1
+    for index, sock_level in enumerate(sock_levels):
+        quantile = 0 if sock_last == 0 else index / sock_last
+        low_index = round(quantile * budget_last)
+        high_index = round((1 - quantile) * budget_last)
+        pairs.add((sock_level, budget_levels[low_index]))
+        pairs.add((sock_level, budget_levels[high_index]))
+
+    middle_sock = sock_levels[len(sock_levels) // 2]
+    middle_budget = budget_levels[len(budget_levels) // 2]
+    pairs.add((middle_sock, budget_levels[0]))
+    pairs.add((middle_sock, budget_levels[-1]))
+    pairs.add((sock_levels[0], middle_budget))
+    pairs.add((sock_levels[-1], middle_budget))
+    return tuple(sorted(pairs))
+
+
+def state_cap_for_days(
+    state_caps: tuple[tuple[int, int], ...], days: int, override: int | None
+) -> int:
+    if override is not None:
+        return override
+    for maximum_days, cap in state_caps:
+        if days <= maximum_days:
+            return cap
+    return state_caps[-1][1]
+
+
+def minimum_trajectories(roommates: int, unit: int) -> int:
+    """Baseline plus every one-player deviation for a full hand."""
+    return 1 + roommates * (len(choices(unit)) - 1)
 
 
 def choices(hand_size: int) -> list[Choice]:
@@ -308,59 +396,6 @@ def baseline_choice_index(hand: list[Sock], available: list[Choice]) -> int:
     )
 
 
-def joint_profiles(
-    hands: list[list[Sock]], max_profiles: int, seed: int,
-    action_lists: list[list[Choice]] | None = None,
-) -> tuple[list[tuple[int, ...]], int, int, int]:
-    """Cover every marginal action, then sample pairwise interactions."""
-    action_lists = action_lists or [choices(len(hand)) for hand in hands]
-    sizes = [len(items) for items in action_lists]
-    total = math.prod(sizes)
-    if total <= max_profiles:
-        profiles = list(itertools.product(*(range(size) for size in sizes)))
-        pairwise = sum(sizes[a] * sizes[b] for a in range(len(sizes))
-                       for b in range(a + 1, len(sizes)))
-        return profiles, total, pairwise, pairwise
-
-    baseline = tuple(
-        baseline_choice_index(hand, available)
-        for hand, available in zip(hands, action_lists, strict=True)
-    )
-    profiles = {baseline}
-    for player, size in enumerate(sizes):
-        for action_index in range(size):
-            profile = list(baseline)
-            profile[player] = action_index
-            profiles.add(tuple(profile))
-    if len(profiles) > max_profiles:
-        raise ValueError(
-            f"max_joint_profiles={max_profiles} cannot cover all {len(profiles)} "
-            "individual actions; increase the limit"
-        )
-
-    pair_candidates = []
-    for left in range(len(sizes)):
-        for right in range(left + 1, len(sizes)):
-            for left_action in range(sizes[left]):
-                for right_action in range(sizes[right]):
-                    pair_candidates.append((left, right, left_action, right_action))
-    pairwise_possible = len(pair_candidates)
-    rng = random.Random(seed)
-    rng.shuffle(pair_candidates)
-    explored_pairwise = 0
-    for left, right, left_action, right_action in pair_candidates:
-        if len(profiles) >= max_profiles:
-            break
-        profile = list(baseline)
-        profile[left] = left_action
-        profile[right] = right_action
-        previous = len(profiles)
-        profiles.add(tuple(profile))
-        explored_pairwise += int(len(profiles) > previous)
-
-    return sorted(profiles), total, pairwise_possible, explored_pairwise
-
-
 def initial_state(scenario: Scenario) -> State:
     half = scenario.capacity // 2
     drawer = tuple(sorted(
@@ -377,19 +412,35 @@ def initial_state(scenario: Scenario) -> State:
     )
 
 
-def draw_day(
-    state: State, scenario: Scenario, chance_index: int
-) -> tuple[list[int], list[list[Sock]], list[Sock]]:
-    rng = random.Random(stable_seed(scenario.seed, state.signature, state.day, chance_index, "draw"))
+def roommate_order(state: State, scenario: Scenario, chance_index: int) -> tuple[int, ...]:
+    rng = random.Random(stable_seed(
+        scenario.seed, state.signature, state.day, chance_index, "order"
+    ))
     order = list(range(scenario.roommates))
     rng.shuffle(order)
-    drawer = list(state.drawer)
-    hands: list[list[Sock]] = [[] for _ in range(scenario.roommates)]
-    for player in order:
-        picked = rng.sample(range(len(drawer)), min(scenario.unit, len(drawer)))
-        picked.sort(reverse=True)
-        hands[player] = [drawer.pop(index) for index in picked]
-    return order, hands, drawer
+    return tuple(order)
+
+
+def draw_hand(
+    drawer: list[Sock],
+    state: State,
+    scenario: Scenario,
+    chance_index: int,
+    turn_position: int,
+) -> list[Sock]:
+    """Draw uniformly after all immediate returns from earlier turns.
+
+    Sorting is safe because socks have no identity in the analysis state. It
+    also makes common random numbers depend on the drawer multiset rather than
+    an arbitrary append order.
+    """
+    drawer.sort()
+    rng = random.Random(stable_seed(
+        scenario.seed, state.signature, state.day, chance_index, turn_position, "draw"
+    ))
+    picked = rng.sample(range(len(drawer)), min(scenario.unit, len(drawer)))
+    picked.sort(reverse=True)
+    return [drawer.pop(index) for index in picked]
 
 
 def worn_out(sock: Sock) -> bool:
@@ -417,35 +468,45 @@ def hole_occurs(
     return rng.random() < HOLE_PROBABILITY
 
 
-def apply_profile(
+def run_trajectory(
     state: State,
     scenario: Scenario,
     chance_index: int,
-    order: list[int],
-    hands: list[list[Sock]],
-    leftover_drawer: list[Sock],
-    profile: tuple[int, ...],
-    action_lists: list[list[Choice]] | None = None,
-) -> tuple[State, TransitionMetrics, list[Choice]]:
-    action_lists = action_lists or [choices(len(hand)) for hand in hands]
-    selected = [available[index] for available, index in zip(action_lists, profile, strict=True)]
-    returning: list[Sock] = []
+    order: tuple[int, ...],
+    forced_by_turn: tuple[int | None, ...],
+) -> TrajectoryResult:
+    """Run one sequential day under optional action overrides by turn position."""
+    drawer = list(state.drawer)
+    worn_returning: list[Sock] = []
     pending = {"white": state.pending_white, "black": state.pending_black}
     scores = list(state.scores)
     sockless = list(state.sockless)
     immediate = [0] * scenario.roommates
+    hands: list[tuple[Sock, ...]] = [tuple() for _ in range(scenario.roommates)]
+    selected: list[Choice] = [Choice((), ()) for _ in range(scenario.roommates)]
+    action_indices = [0] * scenario.roommates
     household_discards = 0
     household_holes = 0
     main_holes = 0
 
-    for player in order:
-        hand = hands[player]
-        action = selected[player]
+    for turn_position, player in enumerate(order):
+        hand = draw_hand(drawer, state, scenario, chance_index, turn_position)
+        hands[player] = tuple(hand)
+        available = choices(len(hand))
+        forced = forced_by_turn[turn_position]
+        action_index = (
+            baseline_choice_index(hand, available)
+            if forced is None
+            else forced % len(available)
+        )
+        action = available[action_index]
+        selected[player] = action
+        action_indices[player] = action_index
         if len(hand) < 2:
             scores[player] += int(SOCKLESS_PENALTY)
             sockless[player] += 1
             immediate[player] = int(SOCKLESS_PENALTY)
-            returning.extend(hand)
+            drawer.extend(hand)
             continue
 
         first, second = action.wear
@@ -463,7 +524,7 @@ def apply_profile(
                 household_holes += 1
                 main_holes += int(player == 0)
             else:
-                returning.append(washed(sock))
+                worn_returning.append(washed(sock))
 
         for hand_index, sock in enumerate(hand):
             if hand_index in action.wear:
@@ -472,9 +533,10 @@ def apply_profile(
                 pending[sock[0]] += 1
                 household_discards += 1
             else:
-                returning.append(sock)
+                # Kept leftovers are immediately available to the next roommate.
+                drawer.append(sock)
 
-    next_drawer = list(leftover_drawer) + returning
+    next_drawer = drawer + worn_returning
     spent = state.spent
     packs_bought = 0
     for color_name in ("white", "black"):
@@ -507,7 +569,86 @@ def apply_profile(
         packs_bought=packs_bought,
         spent_today=spent - state.spent,
     )
-    return next_state, metrics, selected
+    return TrajectoryResult(
+        state=next_state,
+        metrics=metrics,
+        order=order,
+        hands=tuple(hands),
+        choices=tuple(selected),
+        action_indices=tuple(action_indices),
+    )
+
+
+def sequential_trajectories(
+    state: State,
+    scenario: Scenario,
+    chance_index: int,
+) -> tuple[list[TrajectoryResult], int, int, int]:
+    """Cover marginal actions, then sample two-turn sequential interactions.
+
+    Marginal coverage changes one roommate's action from the all-baseline path.
+    Pairwise coverage changes an earlier action, redraws later hands from the
+    resulting drawer, and then changes a later action. Thus every stored hand is
+    consistent with the choices that preceded it.
+    """
+    order = roommate_order(state, scenario, chance_index)
+    empty = (None,) * scenario.roommates
+    baseline = run_trajectory(state, scenario, chance_index, order, empty)
+    results: dict[tuple[int, ...], TrajectoryResult] = {
+        baseline.action_indices: baseline
+    }
+
+    marginal_specs: list[tuple[int | None, ...]] = []
+    for turn_position, player in enumerate(order):
+        for action_index in range(len(choices(len(baseline.hands[player])))):
+            forced = [None] * scenario.roommates
+            forced[turn_position] = action_index
+            marginal_specs.append(tuple(forced))
+    required = 1 + sum(
+        max(0, len(choices(len(baseline.hands[player]))) - 1) for player in order
+    )
+    if required > scenario.max_trajectories:
+        raise ValueError(
+            f"max_trajectories={scenario.max_trajectories} cannot cover all "
+            f"{required} baseline-context individual actions; increase the limit"
+        )
+    for forced in marginal_specs:
+        result = run_trajectory(state, scenario, chance_index, order, forced)
+        results.setdefault(result.action_indices, result)
+
+    pair_specs: list[tuple[int | None, ...]] = []
+    for left in range(scenario.roommates):
+        left_player = order[left]
+        left_count = len(choices(len(baseline.hands[left_player])))
+        for left_action in range(left_count):
+            left_forced = [None] * scenario.roommates
+            left_forced[left] = left_action
+            left_result = run_trajectory(
+                state, scenario, chance_index, order, tuple(left_forced)
+            )
+            for right in range(left + 1, scenario.roommates):
+                right_player = order[right]
+                right_count = len(choices(len(left_result.hands[right_player])))
+                for right_action in range(right_count):
+                    forced = left_forced.copy()
+                    forced[right] = right_action
+                    pair_specs.append(tuple(forced))
+    pairwise_possible = len(pair_specs)
+    rng = random.Random(stable_seed(
+        scenario.seed, state.signature, state.day, chance_index, "sequential-pairs"
+    ))
+    rng.shuffle(pair_specs)
+    pairwise_explored = 0
+    for forced in pair_specs:
+        if len(results) >= scenario.max_trajectories:
+            break
+        result = run_trajectory(state, scenario, chance_index, order, forced)
+        before = len(results)
+        results.setdefault(result.action_indices, result)
+        pairwise_explored += int(len(results) > before)
+
+    theoretical_upper = len(choices(scenario.unit)) ** scenario.roommates
+    return list(results.values()), theoretical_upper, pairwise_possible, pairwise_explored
 
 
 def pairable_fraction(drawer: tuple[Sock, ...]) -> float:
@@ -577,11 +718,24 @@ def retain_candidates(
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
+    existing = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'"
+    ).fetchone()
+    if existing:
+        version = connection.execute(
+            "SELECT value FROM metadata WHERE key='schema_version'"
+        ).fetchone()
+        if version and version[0] != "5":
+            connection.close()
+            raise RuntimeError(
+                f"{path} uses tree schema {version[0]}; choose a new --output path "
+                "for the sequential-return simulator"
+            )
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=NORMAL")
     connection.executescript(SCHEMA)
     connection.execute(
-        "INSERT OR REPLACE INTO metadata(key,value) VALUES('schema_version','3')"
+        "INSERT OR REPLACE INTO metadata(key,value) VALUES('schema_version','5')"
     )
     connection.commit()
     return connection
@@ -641,19 +795,22 @@ def ensure_scenario(
     connection: sqlite3.Connection, scenario: Scenario, profile: str
 ) -> tuple[int, str]:
     budget_pp = None if scenario.budget is None else scenario.budget / scenario.roommates
+    budget_ppd = 0 if scenario.budget is None else budget_pp / scenario.days
     connection.execute(
         """
         INSERT OR IGNORE INTO scenarios(
-            signature,profile,roommates,capacity,requested_socks_per_person,
-            actual_socks_per_person,budget,budget_per_person,seed,days,unit,
-            chance_samples,max_joint_profiles,max_states_per_day
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            signature,profile,roommates,capacity,sock_level,requested_socks_per_person,
+            actual_socks_per_person,budget,budget_per_person,budget_level,
+            budget_per_player_day,seed,days,unit,
+            chance_samples,max_trajectories,max_states_per_day
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             scenario.signature, profile, scenario.roommates, scenario.capacity,
-            scenario.requested_socks_per_person, scenario.capacity / scenario.roommates,
-            scenario.budget, budget_pp, scenario.seed, scenario.days, scenario.unit,
-            scenario.chance_samples, scenario.max_joint_profiles,
+            scenario.sock_level, scenario.requested_socks_per_person,
+            scenario.capacity / scenario.roommates, scenario.budget, budget_pp,
+            scenario.budget_level, budget_ppd, scenario.seed, scenario.days, scenario.unit,
+            scenario.chance_samples, scenario.max_trajectories,
             scenario.max_states_per_day,
         ),
     )
@@ -671,8 +828,8 @@ def ensure_scenario(
 
 TRANSITION_INSERT = """
 INSERT INTO transitions(
-    scenario_id,day,parent_state_id,child_signature,context_id,profile_index,
-    profile_indices_json,actions_json,immediate_scores_json,main_immediate,
+    scenario_id,day,parent_state_id,child_signature,context_id,trajectory_index,
+    action_indices_json,actions_json,immediate_scores_json,main_immediate,
     others_immediate_mean,main_discard_count,household_discard_count,main_holes,
     household_holes,packs_bought,spent_today,next_drawer_size,next_pending_white,
     next_pending_black,next_main_score,next_other_mean_score,next_total_sockless
@@ -701,7 +858,7 @@ def expand_layer(
         INSERT INTO layers(scenario_id,day,status) VALUES(?,?,'running')
         ON CONFLICT(scenario_id,day) DO UPDATE SET
             status='running',source_states=0,chance_realizations=0,
-            theoretical_joint_profiles_log10=0,explored_joint_profiles=0,
+            theoretical_trajectories_log10=0,explored_trajectories=0,
             transition_rows=0,unique_candidates=0,retained_states=0,
             started_at=CURRENT_TIMESTAMP,completed_at=NULL
         """,
@@ -724,38 +881,32 @@ def expand_layer(
         state = decode_state(source_row)
         parent_log_weight = float(source_row["log_path_weight"])
         for chance_index in range(scenario.chance_samples):
-            order, hands, leftover = draw_day(state, scenario, chance_index)
-            action_lists = [choices(len(hand)) for hand in hands]
-            profiles, theoretical, pair_possible, pair_explored = joint_profiles(
-                hands,
-                scenario.max_joint_profiles,
-                stable_seed(scenario.seed, state.signature, depth, chance_index, "profiles"),
-                action_lists,
+            trajectories, theoretical, pair_possible, pair_explored = sequential_trajectories(
+                state, scenario, chance_index
             )
             chance_realizations += 1
-            explored_profiles += len(profiles)
+            explored_profiles += len(trajectories)
             theoretical_profiles_total += theoretical
+            baseline = trajectories[0]
             context_cursor = connection.execute(
                 """
                 INSERT INTO chance_contexts(
                     scenario_id,day,parent_state_id,chance_index,
-                    joint_profiles_theoretical,pairwise_profiles_possible,
-                    pairwise_profiles_explored,profiles_explored,order_json,hands_json
+                    trajectories_theoretical_upper,sequential_pairs_possible,
+                    sequential_pairs_explored,trajectories_explored,order_json,hands_json
                 ) VALUES(?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     scenario_id, day, int(source_row["id"]), chance_index,
-                    theoretical, pair_possible, pair_explored, len(profiles),
-                    json.dumps(order, separators=(",", ":")),
-                    json.dumps(hands, separators=(",", ":")),
+                    theoretical, pair_possible, pair_explored, len(trajectories),
+                    json.dumps(baseline.order, separators=(",", ":")),
+                    json.dumps(baseline.hands, separators=(",", ":")),
                 ),
             )
             context_id = int(context_cursor.lastrowid)
-            for profile_index, profile in enumerate(profiles):
-                child, metrics, selected = apply_profile(
-                    state, scenario, chance_index, order, hands, leftover, profile,
-                    action_lists,
-                )
+            for trajectory_index, trajectory in enumerate(trajectories):
+                child = trajectory.state
+                metrics = trajectory.metrics
                 candidate = candidates.setdefault(child.signature, Candidate(child))
                 candidate.add(parent_log_weight)
                 other_immediate = (
@@ -763,13 +914,18 @@ def expand_layer(
                 )
                 next_other = sum(child.scores[1:]) / max(1, scenario.roommates - 1)
                 action_json = json.dumps([
-                    {"wear": action.wear, "discard": action.discard}
-                    for action in selected
+                    {
+                        "player": player,
+                        "offered": trajectory.hands[player],
+                        "wear": trajectory.choices[player].wear,
+                        "discard": trajectory.choices[player].discard,
+                    }
+                    for player in trajectory.order
                 ], separators=(",", ":"))
                 batch.append((
                     scenario_id, day, int(source_row["id"]), child.signature,
-                    context_id, profile_index,
-                    json.dumps(profile, separators=(",", ":")), action_json,
+                    context_id, trajectory_index,
+                    json.dumps(trajectory.action_indices, separators=(",", ":")), action_json,
                     json.dumps(metrics.immediate_scores, separators=(",", ":")),
                     metrics.immediate_scores[0], other_immediate,
                     metrics.main_discard_count, metrics.household_discard_count,
@@ -817,7 +973,7 @@ def expand_layer(
     connection.execute(
         """
         UPDATE layers SET status='complete',source_states=?,chance_realizations=?,
-            theoretical_joint_profiles_log10=?,explored_joint_profiles=?,transition_rows=?,
+            theoretical_trajectories_log10=?,explored_trajectories=?,transition_rows=?,
             unique_candidates=?,retained_states=?,completed_at=CURRENT_TIMESTAMP
         WHERE scenario_id=? AND day=?
         """,
@@ -866,54 +1022,55 @@ def run_scenario(
     return True
 
 
-def parse_budgets(values: list[str] | None, defaults: tuple[int | None, ...]) -> tuple[int | None, ...]:
-    if values is None:
-        return defaults
-    result = []
-    for value in values:
-        result.append(None if value.lower() in {"none", "inf", "unlimited"} else int(value))
-    return tuple(result)
-
-
 def build_scenarios(args: argparse.Namespace) -> list[Scenario]:
     defaults = PROFILE_DEFAULTS[args.profile]
     roommate_values = tuple(args.roommates or defaults["roommates"])
-    ratios = tuple(args.sock_ratios or defaults["sock_ratios"])
-    budgets_pp = parse_budgets(args.budgets_per_person, defaults["budgets_per_person"])
+    day_values = tuple(args.days or defaults["day_values"])
+    sock_levels = tuple(args.sock_levels or defaults["sock_levels"])
+    budget_levels = tuple(args.budget_levels or defaults["budget_levels"])
     seeds = tuple(args.seeds or defaults["seeds"])
-    days = args.days or defaults["days"]
     chance_samples = args.chance_samples or defaults["chance_samples"]
-    max_profiles = args.max_joint_profiles or defaults["max_joint_profiles"]
-    max_states = args.max_states or defaults["max_states"]
-    # it should be different for 4-sock-senario and 5-sock-senario, then we need to keep the `unit`
-    actions_per_hand = len(choices(args.unit))
+    max_trajectories = args.max_trajectories or defaults["max_trajectories"]
+    full_grid = args.full_grid or defaults["full_grid"]
+    pairs = parameter_pairs(sock_levels, budget_levels, full_grid)
     result = []
-    for roommates, ratio, budget_pp, seed in itertools.product(
-        roommate_values, ratios, budgets_pp, seeds
+    seen_conditions: set[tuple[int, int, int, int, int]] = set()
+    for roommates, days, pair, seed in itertools.product(
+        roommate_values, day_values, pairs, seeds
     ):
-        capacity = round_capacity(roommates, ratio, args.unit)
-        budget = None if budget_pp is None else budget_pp * roommates
+        sock_level, budget_level = pair
+        capacity, requested_ratio = capacity_from_level(roommates, sock_level, args.unit)
+        budget = budget_from_level(roommates, days, budget_level)
+        max_states = state_cap_for_days(defaults["state_caps"], days, args.max_states)
+        condition = (roommates, days, capacity, budget, seed)
+        if condition in seen_conditions:
+            continue
+        seen_conditions.add(condition)
         result.append(Scenario(
             roommates=roommates,
             capacity=capacity,
-            requested_socks_per_person=ratio,
+            sock_level=sock_level,
+            requested_socks_per_person=requested_ratio,
             budget=budget,
+            budget_level=budget_level,
             seed=seed,
             days=days,
             unit=args.unit,
             chance_samples=chance_samples,
-            # cover the baseline plus every player's individual deviations
-            max_joint_profiles=max(max_profiles, 1 + roommates * (actions_per_hand - 1)),
+            max_trajectories=max(
+                max_trajectories,
+                minimum_trajectories(roommates, args.unit),
+            ),
             max_states_per_day=max_states,
         ))
     return result
 
 
-def workload(items: list[Scenario]) -> dict[str, float | int | str]:
+def workload(items: list[Scenario]) -> dict[str, object]:
     transitions = sum(
         (1 + (item.days - 1) * item.max_states_per_day)
         * item.chance_samples
-        * item.max_joint_profiles
+        * item.max_trajectories
         for item in items
     )
     minimum_hours = transitions / 5000 / 3600
@@ -926,6 +1083,16 @@ def workload(items: list[Scenario]) -> dict[str, float | int | str]:
     )
     return {
         "scenarios": len(items),
+        "roommate_values": sorted({item.roommates for item in items}),
+        "day_values": sorted({item.days for item in items}),
+        "capacity_range": (
+            f"{min((item.capacity for item in items), default=0)}-"
+            f"{max((item.capacity for item in items), default=0)} socks"
+        ),
+        "budget_range": (
+            f"${min((item.budget or 0 for item in items), default=0)}-"
+            f"${max((item.budget or 0 for item in items), default=0)}"
+        ),
         "transition_rows_upper_bound": transitions,
         "runtime_estimate": f"{minimum_hours:.1f}-{maximum_hours:.1f} hours",
         "database_estimate": f"{low_storage:.1f}-{high_storage:.1f} GiB",
@@ -937,15 +1104,34 @@ def workload(items: list[Scenario]) -> dict[str, float | int | str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=tuple(PROFILE_DEFAULTS), default="small")
-    parser.add_argument("--output", type=Path, default=Path("datasets/sock_tree.sqlite"))
-    parser.add_argument("--roommates", nargs="+", type=int)
-    parser.add_argument("--sock-ratios", nargs="+", type=float)
-    parser.add_argument("--budgets-per-person", nargs="+")
+    parser.add_argument(
+        "--output", type=Path, default=Path("datasets/sock_tree_space.sqlite")
+    )
+    parser.add_argument("--roommates", nargs="+", type=int, choices=range(1, 11))
+    parser.add_argument(
+        "--days", nargs="+", type=int, choices=range(1, 1001),
+        help="one or more game lengths from 1 through 1000",
+    )
+    parser.add_argument(
+        "--sock-levels", nargs="+", type=float,
+        help="normalized positions in the legal sock interval [0,1]",
+    )
+    parser.add_argument(
+        "--budget-levels", nargs="+", type=float,
+        help="normalized positions in the budget interval [0,1]",
+    )
+    parser.add_argument(
+        "--full-grid", action="store_true",
+        help="cross every sock level with every budget level",
+    )
     parser.add_argument("--seeds", nargs="+", type=int)
-    parser.add_argument("--days", type=int)
     parser.add_argument("--unit", type=int, choices=(4, 5), default=4)
     parser.add_argument("--chance-samples", type=int)
-    parser.add_argument("--max-joint-profiles", type=int)
+    parser.add_argument(
+        "--max-trajectories", "--max-joint-profiles",
+        dest="max_trajectories", type=int,
+        help="maximum sequential day trajectories per state and chance sample",
+    )
     parser.add_argument("--max-states", type=int)
     parser.add_argument("--limit-scenarios", type=int)
     parser.add_argument("--dry-run", action="store_true")

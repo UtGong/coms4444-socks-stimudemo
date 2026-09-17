@@ -139,7 +139,10 @@ not a submission.
 
 `offered` holds `selection_unit` shade values in the range 0–255. Pick two
 indices to wear, and list any of the remaining indices you want thrown out.
-Anything you neither wear nor discard goes back in the drawer unworn.
+Anything you neither wear nor discard goes back in the drawer immediately and
+unworn, so a later roommate can draw it that same day. The two worn socks are
+washed and return only after every roommate has taken a turn. Discarded socks
+leave the drawer unless a six-pack replacement is bought.
 
 `turn` gives you the day number, your own full embarrassment history, the total
 spent so far, and the budget remaining. That is all you get. If you build a `TurnContext` for your
