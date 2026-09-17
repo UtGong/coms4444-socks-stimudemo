@@ -277,6 +277,29 @@ python3.12 -m analysis.visualize_dataset \
   --output results/dataset_overview.html
 ```
 
+Generate the detailed conditional-strategy report and its analysis-ready CSV:
+
+```sh
+python3.12 -m analysis.strategy_rules \
+  datasets/socks_counterfactual.sqlite \
+  --output results/strategy_rules.html \
+  --csv results/strategy_rules_matrix.csv
+```
+
+This report conditions the recorded results on starting and remaining budget,
+active socks per roommate, roommate count, game phase, proximity to a six-sock
+replacement batch, whether a discarded sock had a close same-color partner,
+and whether discarding improves color balance. Against greedy backgrounds, it
+selects a one-turn focal action using repeats 0-1 and reports its outcomes only
+on held-out repeats 2-3. It separately shows focal embarrassment, the average
+of the other roommates, and the relative margin between them.
+
+The strategy report also marks the information boundary. A tournament player
+can observe its hand, day, configured capacity and roommate count, household
+spending, remaining budget, and its own score history. Current drawer size,
+pending counts by color, draw-order position, opponents' scores, and their
+hands are oracle fields available only to this offline analysis.
+
 Open `results/index.html`, then select **1.63M-rollout overview**. This page is
 computed directly from the completed SQLite database. The daily-choice and
 pooling pages answer narrower questions and use their own configured runs.
