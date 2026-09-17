@@ -75,17 +75,17 @@ def build(database: Path, output: Path) -> None:
         FROM layers WHERE status='complete' GROUP BY day ORDER BY day
     """)
     scenario_rows = rows(connection, """
-        SELECT roommates, capacity, ROUND(actual_socks_per_person,2),
-               CASE WHEN budget_per_person IS NULL THEN 'unlimited'
-                    ELSE printf('$%g',budget_per_person) END, seed, status,
+        SELECT roommates, days, ROUND(sock_level,2), capacity,
+               ROUND(actual_socks_per_person,2), ROUND(budget_level,2), budget,
+               ROUND(budget_per_player_day,2), seed, status,
                (SELECT COUNT(*) FROM layers l WHERE l.scenario_id=s.id AND l.status='complete'),
                (SELECT COALESCE(SUM(transition_rows),0) FROM layers l WHERE l.scenario_id=s.id)
-        FROM scenarios s ORDER BY roommates,capacity,budget_per_person,seed
+        FROM scenarios s ORDER BY roommates,days,sock_level,budget_level,seed
     """)
     condition_rows = rows(connection, """
-        SELECT s.roommates, ROUND(s.actual_socks_per_person,2),
-               CASE WHEN s.budget_per_person IS NULL THEN 'unlimited'
-                    ELSE printf('$%g',s.budget_per_person) END,
+        SELECT s.roommates, s.days, ROUND(s.sock_level,2),
+               ROUND(s.actual_socks_per_person,2), ROUND(s.budget_level,2),
+               ROUND(s.budget_per_player_day,2),
                COUNT(*), ROUND(AVG(t.main_immediate),2),
                ROUND(AVG(t.others_immediate_mean),2),
                ROUND(AVG(t.next_drawer_size*1.0/s.roommates),2),
@@ -93,8 +93,8 @@ def build(database: Path, output: Path) -> None:
                ROUND(AVG(t.packs_bought),3),
                ROUND(100.0*AVG(t.main_immediate<t.others_immediate_mean),2)
         FROM transitions t JOIN scenarios s ON s.id=t.scenario_id
-        GROUP BY s.roommates,s.capacity,s.budget
-        ORDER BY s.roommates,s.capacity,s.budget
+        GROUP BY s.roommates,s.days,s.capacity,s.budget
+        ORDER BY s.roommates,s.days,s.sock_level,s.budget_level
     """)
     action_rows = rows(connection, """
         SELECT main_discard_count, COUNT(*), ROUND(AVG(main_immediate),2),
@@ -149,10 +149,10 @@ def build(database: Path, output: Path) -> None:
     <div class="stats">{cards}</div>
     {bars(day_bars, "Recorded transition rows by simulated day")}
     <section class="card"><h2>Layer coverage and pruning</h2>{table(["Day","Chance realizations","Trajectories explored","Transitions","Unique next states","Retained states","Retained %"],coverage_rows)}</section>
-    <section class="card"><h2>Parameter conditions</h2>{table(["Roommates","Initial socks/person","Budget/person","Transitions","Main embarrassment","Other mean embarrassment","Next socks/person","Main discards","Packs bought","Main below others %"],condition_rows)}</section>
+    <section class="card"><h2>Parameter conditions</h2>{table(["Roommates","Days","Sock level","Initial socks/person","Budget level","Budget/player/day","Transitions","Main embarrassment","Other mean embarrassment","Next socks/person","Main discards","Packs bought","Main below others %"],condition_rows)}</section>
     <section class="card"><h2>Main-player action effects</h2>{table(["Main discards","Transitions","Main embarrassment","Other mean","Other-main margin","Next drawer","Spend today","Main holes","Main below others %"],action_rows)}</section>
     <section class="card"><h2>Effects under stock pressure</h2>{table(["Parent drawer socks/person","Main discards","Transitions","Main embarrassment","Other mean","Drawer change","New sockless"],stock_rows)}</section>
-    <section class="card"><h2>Scenario progress</h2>{table(["n","Capacity","Socks/person","Budget/person","Seed","Status","Layers complete","Transitions"],scenario_rows)}</section>
+    <section class="card"><h2>Scenario progress</h2>{table(["n","Days","Sock level","Capacity","Socks/person","Budget level","Budget","Budget/player/day","Seed","Status","Layers complete","Transitions"],scenario_rows)}</section>
     </main></html>"""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(page, encoding="utf-8")
@@ -164,7 +164,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "database", nargs="?", type=Path,
-        default=Path("datasets/sock_tree_sequential.sqlite"),
+        default=Path("datasets/sock_tree_space.sqlite"),
     )
     parser.add_argument("--output", type=Path, default=Path("results/tree_report.html"))
     args = parser.parse_args()
