@@ -4,7 +4,7 @@
 
 # Sweep output. Regenerate with `uv run sweep.py configs/<name>.json`; the
 # configs are committed, the results are not.
-# results/
+results/
 datasets/
 
 # Per-run debug logs from main.py. Regenerated every invocation.
