@@ -47,37 +47,45 @@ This is a bounded state graph, not a claim of exhaustive coverage. The database
 records theoretical trajectory upper bounds, explored trajectories, unique next
 states, and retained states for every simulated day.
 
-## Parameter ratios
+## Parameter space and bounded design
 
 The primary inputs are:
 
-- roommate count `n`;
-- requested initial socks per roommate `C/n`;
-- initial household budget per roommate `B/n`;
-- number of days;
+- roommate count `n` in `{1,2,...,10}`;
+- game length `d` in `{1,2,...,1000}`;
+- initial socks `C` in `[4*n+10, 20*n]`;
+- household budget `B` in `[0, 4*n*d]`;
 - chance samples per retained state;
 - sequential action trajectories per state and chance sample;
 - retained states per parameter condition and day.
 
-Capacity is rounded upward to a multiple of four and must satisfy
-`C > 4*n + 10`. Both the requested and actual socks-per-roommate ratios are
-stored in SQLite. If two requested ratios round to the same legal capacity for
-the same roommate count, the duplicate condition is simulated only once.
+The engine requires capacity to be a multiple of four and strictly greater than
+`unit*n+10`. For the standard four-sock game, the first legal value in the
+requested interval is therefore `4*n+12`. Let `s` and `b` be normalized sock
+and budget levels in `[0,1]`. The simulator maps them to
 
-For a requested sock ratio `r_s` and budget ratio `r_b`, each condition uses
+`C_min = 4 * (floor(max(4*n+10, unit*n+10)/4) + 1)`,
 
-`C = 4 * ceil(max(n*r_s, 4*n + 11) / 4)` and `B = n*r_b`.
+`C(s) = nearest legal multiple of 4 to C_min + s*(20*n-C_min)`, and
 
-Thus comparisons across roommate counts hold the requested resources per
-person constant. `B` is unlimited when `r_b=unlimited`.
+`B(b) = round(b*4*n*d)`.
+
+The database stores `s`, `b`, `C`, `C/n`, `B`, and `B/(n*d)`. Conditions that
+round to the same `(n,d,C,B,seed)` are simulated once.
+
+The research profile samples `d={1,10,30,100,360,1000}` and five levels for
+both `s` and `b`: `{0,0.25,0.5,0.75,1}`. A 13-point space-filling design covers
+the two diagonals and central boundary cases instead of crossing all 25 pairs.
+This retains low/high resources, aligned ratios, opposing ratios, and midpoint
+effects. `--full-grid` enables the complete cross product.
 
 The built-in profiles are:
 
 | Profile | Parameter conditions | State/action limits | Estimated upper bound |
 | --- | --- | --- | --- |
-| `small` | `n={1,2,4,6,8,10}`, socks/person `{8,16}`, budget/person `{0,100,unlimited}`, one seed | 33 unique conditions; 50 states/day, 2 chance samples, 256 trajectories | about 7.6M transitions |
-| `research` | every `n=1..10`, socks/person `{6,8,12,16,24}`, budget/person `{0,10,25,50,100,300,unlimited}`, one seed | 315 unique conditions; 50 states/day, 2 chance samples, 256 trajectories | about 72.7M transitions |
-| `large` | same parameter grid, two seeds | 630 unique conditions; 150 states/day, 3 chance samples, 384 trajectories | about 980.5M transitions |
+| `small` | `n={1,5,10}`, `d={1,10,100,1000}`, levels `{0,0.5,1}`, sparse design, one seed | 96 unique conditions; adaptive 1-20 states/day, 1 chance sample, 256 trajectories | about 10.3M transitions |
+| `research` | every `n=1..10`, six sampled `d` values, five resource levels, 13-point design, one seed | 762 unique conditions; adaptive 1-30 states/day, 1 chance sample, 256 trajectories | about 109.2M transitions |
+| `large` | every `n=1..10`, six sampled `d` values, full 25-point grid, two seeds | 2,820 unique conditions; adaptive 2-50 states/day, 2 chance samples, 384 trajectories | about 2.28B transitions |
 
 The estimates are ceilings after the first day and assume every layer reaches
 its state and trajectory caps. State merging and depleted hands can reduce work.
@@ -85,9 +93,9 @@ Actual speed depends heavily on the computer and SSD.
 
 Expected planning ranges:
 
-- `small`: roughly 0.4-2.1 hours and 2.1-6.4 GiB;
-- `research`: roughly 4-20 hours and 20-61 GiB;
-- `large`: roughly 55-272 hours and 274-822 GiB.
+- `small`: roughly 0.6-2.9 hours and 2.9-8.6 GiB;
+- `research`: roughly 6-30 hours and 31-92 GiB;
+- `large`: roughly 127-635 hours and 638 GiB-1.9 TiB.
 
 Use `research` first. The `large` profile is intentionally expensive and may
 be unsuitable for a laptop because of storage rather than CPU time.
@@ -104,7 +112,7 @@ Start the recommended broad run:
 
 ```sh
 python3.12 -m analysis.tree_simulation --profile research \
-  --output datasets/sock_tree_sequential.sqlite
+  --output datasets/sock_tree_space.sqlite
 ```
 
 The command is resumable. A completed day-layer is skipped. If a layer was
@@ -113,13 +121,13 @@ interrupted, its partial transition rows are deleted and that layer is rebuilt.
 Check progress from another terminal:
 
 ```sh
-python3.12 -m analysis.tree_status datasets/sock_tree_sequential.sqlite
+python3.12 -m analysis.tree_status datasets/sock_tree_space.sqlite
 ```
 
 Generate the visualization after the run, or while it is partially complete:
 
 ```sh
-python3.12 -m analysis.tree_report datasets/sock_tree_sequential.sqlite \
+python3.12 -m analysis.tree_report datasets/sock_tree_space.sqlite \
   --output results/tree_report.html
 ```
 
@@ -130,28 +138,32 @@ Run a custom grid:
 ```sh
 python3.12 -m analysis.tree_simulation --profile small \
   --roommates 1 2 3 4 5 6 7 8 9 10 \
-  --sock-ratios 6 8 12 16 24 \
-  --budgets-per-person 0 10 25 50 100 300 unlimited \
+  --days 1 10 100 360 1000 \
+  --sock-levels 0 0.25 0.5 0.75 1 \
+  --budget-levels 0 0.25 0.5 0.75 1 \
+  --full-grid \
   --seeds 1 2 3 \
-  --days 10 \
   --chance-samples 4 \
   --max-trajectories 256 \
   --max-states 300 \
   --output datasets/sock_tree_custom.sqlite
 ```
 
-Roommate counts are limited to 1-10. All CLI overrides replace the corresponding
-profile defaults. Use `--dry-run` after changing limits.
+Roommate counts are limited to 1-10, days to 1-1000, and normalized resource
+levels to `[0,1]`. All CLI overrides replace the corresponding profile defaults.
+`--max-states` replaces the adaptive long-run caps, so use it cautiously with
+large day values. Always use `--dry-run` after changing limits.
 
-Databases from the earlier simultaneous-hand model use schema version 3 and
-cannot be resumed. Use the new `sock_tree_sequential.sqlite` path; the simulator
-rejects an old database rather than mixing incompatible data.
+This parameter model uses schema version 5. Older tree databases cannot be
+resumed; choose a new output filename. The simulator rejects an old database
+rather than mixing incompatible data.
 
 ## Stored data
 
 The normalized tables are:
 
-- `scenarios`: parameter ratios, exact capacities, limits, seeds, and status;
+- `scenarios`: normalized resource levels, exact resources, game lengths,
+  limits, seeds, and status;
 - `layers`: theoretical and explored coverage for each day;
 - `states`: retained canonical next-day states and distribution summaries;
 - `chance_contexts`: sampled roommate order plus the baseline trajectory's

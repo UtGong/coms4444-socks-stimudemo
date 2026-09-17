@@ -76,8 +76,10 @@ class State:
 class Scenario:
     roommates: int
     capacity: int
+    sock_level: float
     requested_socks_per_person: float
     budget: int | None
+    budget_level: float
     seed: int
     days: int
     unit: int
@@ -124,34 +126,37 @@ class TrajectoryResult:
 
 PROFILE_DEFAULTS = {
     "small": {
-        "roommates": (1, 2, 4, 6, 8, 10),
-        "sock_ratios": (8.0, 16.0),
-        "budgets_per_person": (0, 100, None),
+        "roommates": (1, 5, 10),
+        "day_values": (1, 10, 100, 1000),
+        "sock_levels": (0.0, 0.5, 1.0),
+        "budget_levels": (0.0, 0.5, 1.0),
+        "full_grid": False,
         "seeds": (1,),
-        "days": 10,
-        "chance_samples": 2,
+        "chance_samples": 1,
         "max_trajectories": 256,
-        "max_states": 50,
+        "state_caps": ((30, 20), (100, 5), (360, 2), (1000, 1)),
     },
     "research": {
         "roommates": tuple(range(1, 11)),
-        "sock_ratios": (6.0, 8.0, 12.0, 16.0, 24.0),
-        "budgets_per_person": (0, 10, 25, 50, 100, 300, None),
+        "day_values": (1, 10, 30, 100, 360, 1000),
+        "sock_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "budget_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "full_grid": False,
         "seeds": (1,),
-        "days": 10,
-        "chance_samples": 2,
+        "chance_samples": 1,
         "max_trajectories": 256,
-        "max_states": 50,
+        "state_caps": ((30, 30), (100, 5), (360, 2), (1000, 1)),
     },
     "large": {
         "roommates": tuple(range(1, 11)),
-        "sock_ratios": (6.0, 8.0, 12.0, 16.0, 24.0),
-        "budgets_per_person": (0, 10, 25, 50, 100, 300, None),
+        "day_values": (1, 10, 30, 100, 360, 1000),
+        "sock_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "budget_levels": (0.0, 0.25, 0.5, 0.75, 1.0),
+        "full_grid": True,
         "seeds": (1, 2),
-        "days": 10,
-        "chance_samples": 3,
+        "chance_samples": 2,
         "max_trajectories": 384,
-        "max_states": 150,
+        "state_caps": ((30, 50), (100, 10), (360, 4), (1000, 2)),
     },
 }
 
@@ -168,10 +173,13 @@ CREATE TABLE IF NOT EXISTS scenarios (
     profile TEXT NOT NULL,
     roommates INTEGER NOT NULL,
     capacity INTEGER NOT NULL,
+    sock_level REAL NOT NULL,
     requested_socks_per_person REAL NOT NULL,
     actual_socks_per_person REAL NOT NULL,
     budget INTEGER,
     budget_per_person REAL,
+    budget_level REAL NOT NULL,
+    budget_per_player_day REAL NOT NULL,
     seed INTEGER NOT NULL,
     days INTEGER NOT NULL,
     unit INTEGER NOT NULL,
@@ -285,11 +293,75 @@ def stable_seed(*parts: object) -> int:
     return int.from_bytes(digest, "big")
 
 
-def round_capacity(roommates: int, ratio: float, unit: int = 4) -> int:
-    requested = math.ceil(roommates * ratio)
-    minimum = unit * roommates + 11
-    capacity = max(requested, minimum)
-    return 4 * math.ceil(capacity / 4)
+def capacity_bounds(roommates: int, unit: int = 4) -> tuple[int, int]:
+    """Return legal multiples of four inside the requested sock interval."""
+    requested_floor = 4 * roommates + 10
+    engine_floor = unit * roommates + 10
+    strict_floor = max(requested_floor, engine_floor)
+    minimum = 4 * (strict_floor // 4 + 1)
+    maximum = 20 * roommates
+    if minimum > maximum:
+        raise ValueError(
+            f"no legal capacity for n={roommates}, unit={unit} inside "
+            f"[{requested_floor}, {maximum}]"
+        )
+    return minimum, maximum
+
+
+def capacity_from_level(roommates: int, level: float, unit: int = 4) -> tuple[int, float]:
+    if not 0 <= level <= 1:
+        raise ValueError(f"sock level must lie in [0,1], got {level}")
+    minimum, maximum = capacity_bounds(roommates, unit)
+    target = minimum + level * (maximum - minimum)
+    capacity = min(maximum, max(minimum, 4 * round(target / 4)))
+    return capacity, target / roommates
+
+
+def budget_from_level(roommates: int, days: int, level: float) -> int:
+    if not 0 <= level <= 1:
+        raise ValueError(f"budget level must lie in [0,1], got {level}")
+    return round(level * 4 * roommates * days)
+
+
+def parameter_pairs(
+    sock_levels: tuple[float, ...],
+    budget_levels: tuple[float, ...],
+    full_grid: bool,
+) -> tuple[tuple[float, float], ...]:
+    """Return a full grid or a boundary-aware space-filling cross design."""
+    if full_grid:
+        return tuple(itertools.product(sock_levels, budget_levels))
+    if not sock_levels or not budget_levels:
+        return tuple()
+
+    pairs: set[tuple[float, float]] = set()
+    sock_last = len(sock_levels) - 1
+    budget_last = len(budget_levels) - 1
+    for index, sock_level in enumerate(sock_levels):
+        quantile = 0 if sock_last == 0 else index / sock_last
+        low_index = round(quantile * budget_last)
+        high_index = round((1 - quantile) * budget_last)
+        pairs.add((sock_level, budget_levels[low_index]))
+        pairs.add((sock_level, budget_levels[high_index]))
+
+    middle_sock = sock_levels[len(sock_levels) // 2]
+    middle_budget = budget_levels[len(budget_levels) // 2]
+    pairs.add((middle_sock, budget_levels[0]))
+    pairs.add((middle_sock, budget_levels[-1]))
+    pairs.add((sock_levels[0], middle_budget))
+    pairs.add((sock_levels[-1], middle_budget))
+    return tuple(sorted(pairs))
+
+
+def state_cap_for_days(
+    state_caps: tuple[tuple[int, int], ...], days: int, override: int | None
+) -> int:
+    if override is not None:
+        return override
+    for maximum_days, cap in state_caps:
+        if days <= maximum_days:
+            return cap
+    return state_caps[-1][1]
 
 
 def choices(hand_size: int) -> list[Choice]:
@@ -648,7 +720,7 @@ def connect(path: Path) -> sqlite3.Connection:
         version = connection.execute(
             "SELECT value FROM metadata WHERE key='schema_version'"
         ).fetchone()
-        if version and version[0] != "4":
+        if version and version[0] != "5":
             connection.close()
             raise RuntimeError(
                 f"{path} uses tree schema {version[0]}; choose a new --output path "
@@ -658,7 +730,7 @@ def connect(path: Path) -> sqlite3.Connection:
     connection.execute("PRAGMA synchronous=NORMAL")
     connection.executescript(SCHEMA)
     connection.execute(
-        "INSERT OR REPLACE INTO metadata(key,value) VALUES('schema_version','4')"
+        "INSERT OR REPLACE INTO metadata(key,value) VALUES('schema_version','5')"
     )
     connection.commit()
     return connection
@@ -718,18 +790,21 @@ def ensure_scenario(
     connection: sqlite3.Connection, scenario: Scenario, profile: str
 ) -> tuple[int, str]:
     budget_pp = None if scenario.budget is None else scenario.budget / scenario.roommates
+    budget_ppd = 0 if scenario.budget is None else budget_pp / scenario.days
     connection.execute(
         """
         INSERT OR IGNORE INTO scenarios(
-            signature,profile,roommates,capacity,requested_socks_per_person,
-            actual_socks_per_person,budget,budget_per_person,seed,days,unit,
+            signature,profile,roommates,capacity,sock_level,requested_socks_per_person,
+            actual_socks_per_person,budget,budget_per_person,budget_level,
+            budget_per_player_day,seed,days,unit,
             chance_samples,max_trajectories,max_states_per_day
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             scenario.signature, profile, scenario.roommates, scenario.capacity,
-            scenario.requested_socks_per_person, scenario.capacity / scenario.roommates,
-            scenario.budget, budget_pp, scenario.seed, scenario.days, scenario.unit,
+            scenario.sock_level, scenario.requested_socks_per_person,
+            scenario.capacity / scenario.roommates, scenario.budget, budget_pp,
+            scenario.budget_level, budget_ppd, scenario.seed, scenario.days, scenario.unit,
             scenario.chance_samples, scenario.max_trajectories,
             scenario.max_states_per_day,
         ),
@@ -942,41 +1017,37 @@ def run_scenario(
     return True
 
 
-def parse_budgets(values: list[str] | None, defaults: tuple[int | None, ...]) -> tuple[int | None, ...]:
-    if values is None:
-        return defaults
-    result = []
-    for value in values:
-        result.append(None if value.lower() in {"none", "inf", "unlimited"} else int(value))
-    return tuple(result)
-
-
 def build_scenarios(args: argparse.Namespace) -> list[Scenario]:
     defaults = PROFILE_DEFAULTS[args.profile]
     roommate_values = tuple(args.roommates or defaults["roommates"])
-    ratios = tuple(args.sock_ratios or defaults["sock_ratios"])
-    budgets_pp = parse_budgets(args.budgets_per_person, defaults["budgets_per_person"])
+    day_values = tuple(args.days or defaults["day_values"])
+    sock_levels = tuple(args.sock_levels or defaults["sock_levels"])
+    budget_levels = tuple(args.budget_levels or defaults["budget_levels"])
     seeds = tuple(args.seeds or defaults["seeds"])
-    days = args.days or defaults["days"]
     chance_samples = args.chance_samples or defaults["chance_samples"]
     max_trajectories = args.max_trajectories or defaults["max_trajectories"]
-    max_states = args.max_states or defaults["max_states"]
+    full_grid = args.full_grid or defaults["full_grid"]
+    pairs = parameter_pairs(sock_levels, budget_levels, full_grid)
     result = []
-    seen_conditions: set[tuple[int, int, int | None, int]] = set()
-    for roommates, ratio, budget_pp, seed in itertools.product(
-        roommate_values, ratios, budgets_pp, seeds
+    seen_conditions: set[tuple[int, int, int, int, int]] = set()
+    for roommates, days, pair, seed in itertools.product(
+        roommate_values, day_values, pairs, seeds
     ):
-        capacity = round_capacity(roommates, ratio, args.unit)
-        budget = None if budget_pp is None else budget_pp * roommates
-        condition = (roommates, capacity, budget, seed)
+        sock_level, budget_level = pair
+        capacity, requested_ratio = capacity_from_level(roommates, sock_level, args.unit)
+        budget = budget_from_level(roommates, days, budget_level)
+        max_states = state_cap_for_days(defaults["state_caps"], days, args.max_states)
+        condition = (roommates, days, capacity, budget, seed)
         if condition in seen_conditions:
             continue
         seen_conditions.add(condition)
         result.append(Scenario(
             roommates=roommates,
             capacity=capacity,
-            requested_socks_per_person=ratio,
+            sock_level=sock_level,
+            requested_socks_per_person=requested_ratio,
             budget=budget,
+            budget_level=budget_level,
             seed=seed,
             days=days,
             unit=args.unit,
@@ -987,7 +1058,7 @@ def build_scenarios(args: argparse.Namespace) -> list[Scenario]:
     return result
 
 
-def workload(items: list[Scenario]) -> dict[str, float | int | str]:
+def workload(items: list[Scenario]) -> dict[str, object]:
     transitions = sum(
         (1 + (item.days - 1) * item.max_states_per_day)
         * item.chance_samples
@@ -1004,6 +1075,16 @@ def workload(items: list[Scenario]) -> dict[str, float | int | str]:
     )
     return {
         "scenarios": len(items),
+        "roommate_values": sorted({item.roommates for item in items}),
+        "day_values": sorted({item.days for item in items}),
+        "capacity_range": (
+            f"{min((item.capacity for item in items), default=0)}-"
+            f"{max((item.capacity for item in items), default=0)} socks"
+        ),
+        "budget_range": (
+            f"${min((item.budget or 0 for item in items), default=0)}-"
+            f"${max((item.budget or 0 for item in items), default=0)}"
+        ),
         "transition_rows_upper_bound": transitions,
         "runtime_estimate": f"{minimum_hours:.1f}-{maximum_hours:.1f} hours",
         "database_estimate": f"{low_storage:.1f}-{high_storage:.1f} GiB",
@@ -1016,13 +1097,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=tuple(PROFILE_DEFAULTS), default="small")
     parser.add_argument(
-        "--output", type=Path, default=Path("datasets/sock_tree_sequential.sqlite")
+        "--output", type=Path, default=Path("datasets/sock_tree_space.sqlite")
     )
     parser.add_argument("--roommates", nargs="+", type=int, choices=range(1, 11))
-    parser.add_argument("--sock-ratios", nargs="+", type=float)
-    parser.add_argument("--budgets-per-person", nargs="+")
+    parser.add_argument(
+        "--days", nargs="+", type=int, choices=range(1, 1001),
+        help="one or more game lengths from 1 through 1000",
+    )
+    parser.add_argument(
+        "--sock-levels", nargs="+", type=float,
+        help="normalized positions in the legal sock interval [0,1]",
+    )
+    parser.add_argument(
+        "--budget-levels", nargs="+", type=float,
+        help="normalized positions in the budget interval [0,1]",
+    )
+    parser.add_argument(
+        "--full-grid", action="store_true",
+        help="cross every sock level with every budget level",
+    )
     parser.add_argument("--seeds", nargs="+", type=int)
-    parser.add_argument("--days", type=int)
     parser.add_argument("--unit", type=int, choices=(4, 5), default=4)
     parser.add_argument("--chance-samples", type=int)
     parser.add_argument(
