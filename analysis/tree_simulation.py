@@ -885,6 +885,8 @@ def build_scenarios(args: argparse.Namespace) -> list[Scenario]:
     chance_samples = args.chance_samples or defaults["chance_samples"]
     max_profiles = args.max_joint_profiles or defaults["max_joint_profiles"]
     max_states = args.max_states or defaults["max_states"]
+    # it should be different for 4-sock-senario and 5-sock-senario, then we need to keep the `unit`
+    actions_per_hand = len(choices(args.unit))
     result = []
     for roommates, ratio, budget_pp, seed in itertools.product(
         roommate_values, ratios, budgets_pp, seeds
@@ -900,7 +902,8 @@ def build_scenarios(args: argparse.Namespace) -> list[Scenario]:
             days=days,
             unit=args.unit,
             chance_samples=chance_samples,
-            max_joint_profiles=max_profiles,
+            # cover the baseline plus every player's individual deviations
+            max_joint_profiles=max(max_profiles, 1 + roommates * (actions_per_hand - 1)),
             max_states_per_day=max_states,
         ))
     return result
@@ -918,7 +921,7 @@ def workload(items: list[Scenario]) -> dict[str, float | int | str]:
     low_storage = transitions * 300 / 1024**3
     high_storage = transitions * 900 / 1024**3
     full_action_log10 = max(
-        (item.days * item.roommates * math.log10(24) for item in items),
+        (item.days * item.roommates * math.log10(len(choices(item.unit))) for item in items),
         default=0,
     )
     return {
