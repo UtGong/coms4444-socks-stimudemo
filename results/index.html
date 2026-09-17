@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sock simulation dashboards</title><style>
+:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#17212b;background:#f4f7f8}
+*{box-sizing:border-box}body{margin:0}main{max-width:1180px;margin:auto;padding:32px 24px 60px}
+h1{font-size:30px;letter-spacing:-.03em;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}
+p{line-height:1.5}.muted{color:#596773}.intro{max-width:820px;margin:0 0 24px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 26px}.chip{background:#e5edf0;border:1px solid #d5e1e5;border-radius:999px;padding:7px 11px;font-size:13px}
+.grid{display:grid;grid-template-columns:1fr;gap:18px}.card{background:white;border:1px solid #dbe4e7;border-radius:16px;box-shadow:0 3px 14px #243b4a0b;padding:22px;margin-bottom:18px}
+.card.full{grid-column:1/-1}.controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+select{font:inherit;padding:9px 12px;border:1px solid #b9cbd1;border-radius:9px;background:white}
+svg{width:100%;height:auto;overflow:visible}.axis{stroke:#b9cbd1;stroke-width:1}.gridline{stroke:#e4eaed;stroke-width:1}.label{fill:#50606c;font-size:12px}.dot{cursor:pointer;stroke:white;stroke-width:1.5}.dot:hover{stroke:#17212b;stroke-width:2.5}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:#50606c;margin-top:8px}.swatch{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.stat{background:#f3f7f8;border-radius:12px;padding:14px}.stat b{display:block;font-size:22px;margin:5px 0}.stat small{color:#596773}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #e7edef}th{color:#50606c;font-weight:600}tr:hover{background:#f4f8f9}.scroll{overflow:auto;max-height:430px}
+.note{font-size:13px;color:#43535e;background:#eaf1f4;padding:12px 15px;border-radius:11px;margin-top:20px}.explain{border-left:4px solid #187a72;background:#edf7f5;padding:14px 16px;margin:20px 0;border-radius:0 10px 10px 0;line-height:1.5}.good{color:#187a72}.bad{color:#b85659}
+.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.metric-grid .card{margin:0}
+@media(max-width:850px){.grid,.metric-grid{display:block}.stats{grid-template-columns:1fr 1fr}main{padding:20px 14px}}
+
+.links{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.link{display:block;text-decoration:none;color:inherit;background:white;border:1px solid #dbe4e7;border-radius:16px;padding:24px;box-shadow:0 3px 14px #243b4a0b}.link:hover{border-color:#187a72;transform:translateY(-1px)}.link strong{display:block;font-size:19px;margin-bottom:8px}.tag{display:inline-block;font-size:12px;font-weight:700;color:#187a72;background:#e7f4f2;border-radius:999px;padding:5px 9px;margin-bottom:14px}@media(max-width:700px){.links{grid-template-columns:1fr}}
+</style><main><h1>Sock simulation dashboards</h1><p class="intro muted">Daily decision analysis and experiment-level comparisons answer different questions. Start with a daily dashboard to inspect the offered hand and legal choices.</p>
+<div class="explain"><strong>Looking for everyday choices?</strong> Open the daily-choice dashboard. Use its day selector to inspect what was offered, which two socks could be worn, which leftovers could be discarded, and the estimated consequence of every legal action.</div>
+<div class="links">
+<a class="link" href="dataset_overview.html"><span class="tag">FULL DATASET</span><strong>1.63M-rollout overview</strong><span class="muted">Coverage, policies, budgets, roommate counts, and matched discard effects</span></a>
+<a class="link" href="socks_choices.html"><span class="tag">DAILY CHOICES</span><strong>Four-sock decisions</strong><span class="muted">Every day · 24 legal actions per full hand · immediate and future outcomes</span></a>
+<a class="link" href="socks_compare_pooling.html"><span class="tag">COMPARISON</span><strong>Pooled versus separate</strong><span class="muted">Matched socks and budget per person across multiple seeds</span></a>
+</div></main></html>
