@@ -138,18 +138,13 @@ def test_shades_only_ever_move_toward_grey(seed, budget):
 	"""Whites fade down, blacks rise. A sock's shade may hold - it was not worn,
 	or it is already at the limit - but it must never reverse.
 
-	The daily budget is ``roommates`` fade steps, not one. Worn socks go back
-	into the drawer at the end of each roommate's turn, and ``step`` dresses
-	roommates one after another, so a sock worn at breakfast is back in the
-	pool for whoever dresses next. A sock can therefore be worn several times
-	in a day - once per roommate at most, since each draws once - and age once
-	for each. That is the shared drawer working as the handout describes it,
-	not a bug; ``test_a_sock_can_be_worn_more_than_once_a_day`` pins it
-	directly.
+	A sock can move by at most one fade step per day. Worn socks wait until the
+	end of the day, while kept leftovers return immediately and may be offered
+	to a later roommate without ageing.
 	"""
 	engine = engine_for(seed, budget)
 	before = {s.id: s.shade for s in engine.drawer}
-	ceiling = engine.roommates
+	ceiling = 1
 
 	while engine.step() is not None:
 		after = {s.id: s.shade for s in engine.drawer}
@@ -206,6 +201,43 @@ def test_a_sock_cannot_be_worn_more_than_once_a_day():
 
 	assert worst_daily_ageing(1) == 1, 'one roommate cannot wear the same sock twice'
 	assert worst_daily_ageing(4) == 1, 'a sock must not be reused by another roommate the same day'
+
+
+def test_kept_leftovers_are_available_to_the_next_roommate():
+	"""Only worn socks wait until day end; unworn kept socks return at once."""
+
+	class WearsFirstTwo(GreedyPlayer):
+		def select_socks(self, offered, turn):
+			from models.player import Selection
+
+			return Selection(wear=(0, 1), discard=())
+
+	class PredictableRng:
+		def shuffle(self, values):
+			return None
+
+		def sample(self, population, count):
+			return list(population)[:count]
+
+		def random(self):
+			return 0.5
+
+	engine = Engine(
+		players=[WearsFirstTwo, WearsFirstTwo],
+		capacity=40,
+		selection_unit=4,
+		days=1,
+		seed=1,
+		timeout=0,
+	)
+	engine.drawer = [_white(255), _white(251), _white(247), _white(243)]
+	engine.rng = PredictableRng()
+
+	record = engine.step()
+
+	assert len(record.offered[0]) == 4
+	assert len(record.offered[1]) == 2
+	assert record.sockless == []
 
 
 @pytest.mark.parametrize(('seed', 'budget'), scenarios())

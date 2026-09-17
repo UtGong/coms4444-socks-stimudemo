@@ -7,13 +7,12 @@ from pathlib import Path
 from analysis.tree_simulation import (
     Scenario,
     State,
-    apply_profile,
     choices,
     connect,
-    draw_day,
     initial_state,
-    joint_profiles,
+    run_trajectory,
     run_scenario,
+    sequential_trajectories,
 )
 
 
@@ -27,7 +26,7 @@ def scenario(**overrides) -> Scenario:
         "days": 1,
         "unit": 4,
         "chance_samples": 1,
-        "max_joint_profiles": 64,
+        "max_trajectories": 64,
         "max_states_per_day": 20,
     }
     values.update(overrides)
@@ -41,62 +40,68 @@ class TreeSimulationTest(unittest.TestCase):
         self.assertEqual(len(choices(2)), 1)
         self.assertEqual(len(choices(1)), 1)  # automatic sockless marker
 
-    def test_profile_design_covers_every_individual_action(self):
-        hands = [
-            [("white", 255)] * 4,
-            [("black", 0)] * 4,
-        ]
-        profiles, theoretical, pair_possible, pair_explored = joint_profiles(hands, 64, 7)
-        self.assertEqual(theoretical, 24**2)
-        self.assertEqual({profile[0] for profile in profiles}, set(range(24)))
-        self.assertEqual({profile[1] for profile in profiles}, set(range(24)))
-        self.assertEqual(pair_possible, 24**2)
-        self.assertGreater(pair_explored, 0)
-
-    def test_keep_actions_conserve_pristine_inventory(self):
-        item = scenario()
-        state = initial_state(item)
-        order, hands, leftover = draw_day(state, item, 0)
-        action_lists = [choices(len(hand)) for hand in hands]
-        profile = tuple(
-            next(index for index, action in enumerate(actions) if not action.discard)
-            for actions in action_lists
-        )
-        child, metrics, _ = apply_profile(
-            state, item, 0, order, hands, leftover, profile, action_lists
-        )
-        self.assertEqual(len(child.drawer), item.capacity)
-        self.assertEqual(child.spent, 0)
-        self.assertEqual(metrics.household_discard_count, 0)
-        self.assertEqual(metrics.household_holes, 0)
-
-    def test_sixth_same_color_discard_buys_pack(self):
-        item = scenario(budget=10)
-        base = initial_state(item)
+    def test_unworn_socks_return_before_next_roommate_draws(self):
+        item = scenario(capacity=4)
         state = State(
             day=0,
-            drawer=base.drawer,
+            drawer=(("white", 249), ("white", 251), ("white", 253), ("white", 255)),
+            pending_white=0,
+            pending_black=0,
+            spent=0,
+            scores=(0, 0),
+            sockless=(0, 0),
+        )
+        result = run_trajectory(state, item, 0, (0, 1), (0, 0))
+        first_leftovers = {result.hands[0][2], result.hands[0][3]}
+        self.assertEqual(set(result.hands[1]), first_leftovers)
+        self.assertEqual(len(result.hands[1]), 2)
+        self.assertEqual(len(result.state.drawer), 4)
+        self.assertEqual(result.metrics.household_discard_count, 0)
+
+    def test_sixth_same_color_discard_buys_pack(self):
+        item = scenario(capacity=8, budget=10)
+        state = State(
+            day=0,
+            drawer=tuple(("white", 255) for _ in range(8)),
             pending_white=5,
             pending_black=0,
             spent=0,
-            scores=base.scores,
-            sockless=base.sockless,
+            scores=(0, 0),
+            sockless=(0, 0),
         )
-        hands = [[("white", 255)] * 4, [("black", 0)] * 4]
-        leftover = list(base.drawer[8:])
-        action_lists = [choices(4), choices(4)]
         main = next(
-            index for index, action in enumerate(action_lists[0])
+            index for index, action in enumerate(choices(4))
             if action.wear == (0, 1) and action.discard == (2,)
         )
-        other = next(index for index, action in enumerate(action_lists[1]) if not action.discard)
-        child, metrics, _ = apply_profile(
-            state, item, 0, [0, 1], hands, leftover, (main, other), action_lists
+        result = run_trajectory(state, item, 0, (0, 1), (main, None))
+        self.assertEqual(result.state.spent, 10)
+        self.assertEqual(result.state.pending_white, 0)
+        self.assertEqual(len(result.state.drawer), 13)
+        self.assertEqual(result.metrics.packs_bought, 1)
+
+    def test_sequential_coverage_records_action_dependent_hands(self):
+        item = scenario(max_trajectories=64)
+        state = initial_state(item)
+        trajectories, theoretical, _, explored = sequential_trajectories(state, item, 0)
+        self.assertEqual(theoretical, 24**2)
+        self.assertLessEqual(len(trajectories), 64)
+        self.assertGreater(explored, 0)
+        self.assertTrue(all(len(result.hands) == 2 for result in trajectories))
+
+    def test_ten_roommates_cover_all_baseline_context_actions(self):
+        item = scenario(
+            roommates=10,
+            capacity=80,
+            requested_socks_per_person=8.0,
+            max_trajectories=256,
         )
-        self.assertEqual(child.spent, 10)
-        self.assertEqual(child.pending_white, 0)
-        self.assertEqual(len(child.drawer), 25)
-        self.assertEqual(metrics.packs_bought, 1)
+        trajectories, _, _, _ = sequential_trajectories(initial_state(item), item, 0)
+        self.assertLessEqual(len(trajectories), 256)
+        for player in range(10):
+            self.assertEqual(
+                {trajectory.action_indices[player] for trajectory in trajectories},
+                set(range(24)),
+            )
 
     def test_database_run_is_resumable(self):
         with tempfile.TemporaryDirectory() as directory:

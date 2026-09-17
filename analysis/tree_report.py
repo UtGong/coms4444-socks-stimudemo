@@ -70,7 +70,7 @@ def build(database: Path, output: Path) -> None:
     transitions = connection.execute("SELECT COUNT(*) FROM transitions").fetchone()[0]
 
     per_day = rows(connection, """
-        SELECT day, SUM(source_states), SUM(explored_joint_profiles),
+        SELECT day, SUM(source_states), SUM(explored_trajectories),
                SUM(transition_rows), SUM(unique_candidates), SUM(retained_states)
         FROM layers WHERE status='complete' GROUP BY day ORDER BY day
     """)
@@ -125,7 +125,7 @@ def build(database: Path, output: Path) -> None:
         ORDER BY stock_per_person,t.main_discard_count
     """)
     coverage_rows = rows(connection, """
-        SELECT day, SUM(chance_realizations), SUM(explored_joint_profiles),
+        SELECT day, SUM(chance_realizations), SUM(explored_trajectories),
                SUM(transition_rows), SUM(unique_candidates), SUM(retained_states),
                ROUND(100.0*SUM(retained_states)/NULLIF(SUM(unique_candidates),0),3)
         FROM layers WHERE status='complete' GROUP BY day ORDER BY day
@@ -143,12 +143,12 @@ def build(database: Path, output: Path) -> None:
     day_bars = [(row[0], float(row[3])) for row in per_day]
     page = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Sock decision-tree report</title><style>{STYLE}</style><main>
-    <h1>Bounded multi-roommate decision tree</h1>
-    <p class="intro">Each retained state branches through sampled random orders and draws. Every individual legal action appears in the joint-profile design; additional profiles sample interactions between roommates. Equivalent next-day states merge before a stratified frontier is retained.</p>
-    <div class="warning"><strong>Interpretation:</strong> transitions are coverage experiments, not outcomes under a probability distribution over player choices. Do not treat an unweighted average over joint profiles as a tournament forecast. Use matched conditions and profile features to study action effects.</div>
+    <h1>Bounded sequential multi-roommate decision tree</h1>
+    <p class="intro">Each retained state branches through sampled random orders. Roommates draw and act one at a time; kept leftovers return immediately, so earlier choices change later hands. Every baseline-context individual action is covered, and additional trajectories sample sequential two-roommate interactions. Equivalent next-day states merge before a stratified frontier is retained.</p>
+    <div class="warning"><strong>Interpretation:</strong> transitions are coverage experiments, not outcomes under a probability distribution over player choices. Do not treat an unweighted average over trajectories as a tournament forecast. Use matched conditions and trajectory features to study action effects.</div>
     <div class="stats">{cards}</div>
     {bars(day_bars, "Recorded transition rows by simulated day")}
-    <section class="card"><h2>Layer coverage and pruning</h2>{table(["Day","Chance realizations","Profiles explored","Transitions","Unique next states","Retained states","Retained %"],coverage_rows)}</section>
+    <section class="card"><h2>Layer coverage and pruning</h2>{table(["Day","Chance realizations","Trajectories explored","Transitions","Unique next states","Retained states","Retained %"],coverage_rows)}</section>
     <section class="card"><h2>Parameter conditions</h2>{table(["Roommates","Initial socks/person","Budget/person","Transitions","Main embarrassment","Other mean embarrassment","Next socks/person","Main discards","Packs bought","Main below others %"],condition_rows)}</section>
     <section class="card"><h2>Main-player action effects</h2>{table(["Main discards","Transitions","Main embarrassment","Other mean","Other-main margin","Next drawer","Spend today","Main holes","Main below others %"],action_rows)}</section>
     <section class="card"><h2>Effects under stock pressure</h2>{table(["Parent drawer socks/person","Main discards","Transitions","Main embarrassment","Other mean","Drawer change","New sockless"],stock_rows)}</section>
@@ -162,7 +162,10 @@ def build(database: Path, output: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("database", nargs="?", type=Path, default=Path("datasets/sock_tree.sqlite"))
+    parser.add_argument(
+        "database", nargs="?", type=Path,
+        default=Path("datasets/sock_tree_sequential.sqlite"),
+    )
     parser.add_argument("--output", type=Path, default=Path("results/tree_report.html"))
     args = parser.parse_args()
     build(args.database, args.output)

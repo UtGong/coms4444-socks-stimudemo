@@ -8,7 +8,10 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("database", nargs="?", type=Path, default=Path("datasets/sock_tree.sqlite"))
+    parser.add_argument(
+        "database", nargs="?", type=Path,
+        default=Path("datasets/sock_tree_sequential.sqlite"),
+    )
     args = parser.parse_args()
     connection = sqlite3.connect(f"file:{args.database}?mode=ro", uri=True)
     statuses = dict(connection.execute(
