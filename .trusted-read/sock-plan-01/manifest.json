@@ -1,0 +1,57 @@
+{
+  "bridgeVersion": "3.6",
+  "kind": "google-docs-trusted-read",
+  "status": "complete",
+  "outputDir": "/home/jojog/projects/columbia-course/COMSW4444/coms4444-socks-stimudemo/.trusted-read/sock-plan-01",
+  "target": {
+    "documentId": "1ORe5919hwyRzqJsB02LWO6PCVCOstg6Z5NILi84J2Lc",
+    "title": "Untitled document",
+    "revisionId": "ANLCKQmfq5vWuXqHnQVWe1oMX7YY6wB6Cv1iGDBqJt1TNdHmmDN027zLdBm39Ya51Ikftj9sAQhkbCB5OE2xnMOZ5N1DX7tQZyqR7VV1pQ",
+    "documentUrl": "https://docs.google.com/document/d/1ORe5919hwyRzqJsB02LWO6PCVCOstg6Z5NILi84J2Lc",
+    "selectedTabId": null
+  },
+  "dropdownMetadata": {
+    "status": "unavailable",
+    "resolvedTool": null,
+    "authoritative": false,
+    "count": 0
+  },
+  "controlAwareness": {
+    "hasProtectedControls": false,
+    "authoritativeDropdownCount": 0,
+    "opaqueControlCount": 0,
+    "affectedParagraphCount": 0,
+    "nativeElementCounts": {},
+    "preservationRequired": false,
+    "recommendedBehavior": "No protected controls were detected in the scanned scope."
+  },
+  "warnings": [],
+  "files": {
+    "document_result": {
+      "path": "/home/jojog/projects/columbia-course/COMSW4444/coms4444-socks-stimudemo/.trusted-read/sock-plan-01/document-result.json",
+      "bytes": 67394,
+      "sha256": "253820c784975d94decb72491f1908bea6d9a04fef3d47cfe93799f00483f232"
+    },
+    "control_inventory": {
+      "path": "/home/jojog/projects/columbia-course/COMSW4444/coms4444-socks-stimudemo/.trusted-read/sock-plan-01/control-inventory.json",
+      "bytes": 1021,
+      "sha256": "3fd6a174053a2c5abe22b93d614da3fe60301d0f6f00a85ef445e07a773a3df8"
+    },
+    "document_outline": {
+      "path": "/home/jojog/projects/columbia-course/COMSW4444/coms4444-socks-stimudemo/.trusted-read/sock-plan-01/document-outline.json",
+      "bytes": 967,
+      "sha256": "0f6978869ceb74de820d21645a23102ab728d499da3ae6e97160862799d29770"
+    },
+    "document_text": {
+      "path": "/home/jojog/projects/columbia-course/COMSW4444/coms4444-socks-stimudemo/.trusted-read/sock-plan-01/document-text.md",
+      "bytes": 505,
+      "sha256": "ce3ee82b001c6035e5f7e0a3801e6cc767de3a414e0a64e233cb581a20dd04a7"
+    },
+    "receipt": {
+      "path": "/home/jojog/projects/columbia-course/COMSW4444/coms4444-socks-stimudemo/.trusted-read/sock-plan-01/receipt.json",
+      "bytes": 952,
+      "sha256": "b8345d757d65105f661f6304dd6f714dce4c0c2ca8095c77dcbc03caa05b2e69"
+    }
+  },
+  "error": null
+}

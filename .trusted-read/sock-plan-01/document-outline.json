@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "kind": "google-docs-normalized-read",
+  "document": {
+    "documentId": "1ORe5919hwyRzqJsB02LWO6PCVCOstg6Z5NILi84J2Lc",
+    "title": "Untitled document",
+    "revisionId": "ANLCKQmfq5vWuXqHnQVWe1oMX7YY6wB6Cv1iGDBqJt1TNdHmmDN027zLdBm39Ya51Ikftj9sAQhkbCB5OE2xnMOZ5N1DX7tQZyqR7VV1pQ",
+    "documentUrl": "https://docs.google.com/document/d/1ORe5919hwyRzqJsB02LWO6PCVCOstg6Z5NILi84J2Lc"
+  },
+  "selectedTabId": null,
+  "controlSummary": {
+    "total": 0,
+    "opaque": 0,
+    "authoritativeDropdowns": 0,
+    "affectedParagraphs": 0
+  },
+  "paragraphs": [
+    {
+      "paragraphId": "P00001",
+      "path": "tabs.t.0.body.content[1]",
+      "tabId": "t.0",
+      "tabTitle": "Tab 1",
+      "segmentId": null,
+      "startIndex": 1,
+      "endIndex": 2,
+      "namedStyleType": "NORMAL_TEXT",
+      "isListItem": false,
+      "listId": null,
+      "nestingLevel": null,
+      "table": null,
+      "text": "",
+      "protectedControls": []
+    }
+  ]
+}

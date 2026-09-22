@@ -1,0 +1,29 @@
+{
+  "bridgeVersion": "3.6",
+  "kind": "google-docs-trusted-read-receipt",
+  "status": "complete",
+  "target": {
+    "documentId": "1ORe5919hwyRzqJsB02LWO6PCVCOstg6Z5NILi84J2Lc",
+    "title": "Untitled document",
+    "revisionId": "ANLCKQmfq5vWuXqHnQVWe1oMX7YY6wB6Cv1iGDBqJt1TNdHmmDN027zLdBm39Ya51Ikftj9sAQhkbCB5OE2xnMOZ5N1DX7tQZyqR7VV1pQ",
+    "documentUrl": "https://docs.google.com/document/d/1ORe5919hwyRzqJsB02LWO6PCVCOstg6Z5NILi84J2Lc",
+    "selectedTabId": null
+  },
+  "dropdownMetadata": {
+    "status": "unavailable",
+    "resolvedTool": null,
+    "authoritative": false,
+    "count": 0
+  },
+  "controlAwareness": {
+    "hasProtectedControls": false,
+    "authoritativeDropdownCount": 0,
+    "opaqueControlCount": 0,
+    "affectedParagraphCount": 0,
+    "nativeElementCounts": {},
+    "preservationRequired": false,
+    "recommendedBehavior": "No protected controls were detected in the scanned scope."
+  },
+  "warnings": [],
+  "error": null
+}
